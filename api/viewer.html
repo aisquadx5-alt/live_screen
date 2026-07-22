@@ -176,9 +176,14 @@
                 console.log('New offer detected - broadcaster reconnected, resetting...');
                 statusBadge.textContent = 'Reconnecting';
                 statusBadge.className = 'badge connecting';
+                placeholder.style.display = 'flex';
+                remoteVideo.srcObject = null;
                 // Close old connection and create a new one
-                const newPc = createPeerConnection(currentRoomId);
+                createPeerConnection(currentRoomId);
+                // Use the NEW peerConnection for subsequent operations
                 hasReceivedOffer = false;
+                // Update pc reference to point to the new connection
+                pc = peerConnection;
                 processedCandidates.clear();
               }
 
