@@ -1,0 +1,10 @@
+{
+  "name": "signaling-backend",
+  "version": "1.0.0",
+  "description": "Serverless WebRTC Signaling Backend",
+  "main": "api/create-room.js",
+  "dependencies": {
+    "@upstash/redis": "^1.28.0",
+    "dotenv": "^16.3.1"
+  }
+}
