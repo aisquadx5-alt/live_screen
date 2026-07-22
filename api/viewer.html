@@ -62,6 +62,8 @@
     let pollInterval = null;
     let hasReceivedOffer = false;
     let processedCandidates = new Set();
+    let lastOfferSdp = null;  // Track offer SDP to detect reconnection
+    let currentRoomId = null;
     const roomIdInput = document.getElementById('roomId');
     const connectBtn = document.getElementById('connectBtn');
     const remoteVideo = document.getElementById('remoteVideo');
@@ -83,19 +85,15 @@
       startViewerSession(roomId);
     });
 
-    async function startViewerSession(roomId) {
-      if (peerConnection) peerConnection.close();
-      if (pollInterval) clearInterval(pollInterval);
-      
-      hasReceivedOffer = false;
-      processedCandidates.clear();
+    function createPeerConnection(roomId) {
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
 
-      statusBadge.textContent = 'Connecting...';
-      statusBadge.className = 'badge connecting';
+      const pc = new RTCPeerConnection(configuration);
 
-      peerConnection = new RTCPeerConnection(configuration);
-
-      peerConnection.ontrack = (event) => {
+      pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
           remoteVideo.srcObject = event.streams[0];
           placeholder.style.display = 'none';
@@ -104,22 +102,39 @@
         }
       };
 
-      peerConnection.onicecandidate = (event) => {
+      pc.onicecandidate = (event) => {
         if (event.candidate) {
           sendSignal(roomId, 'candidate', event.candidate);
         }
       };
 
-      peerConnection.oniceconnectionstatechange = () => {
-        iceState.textContent = peerConnection.iceConnectionState;
-        if (peerConnection.iceConnectionState === 'connected') {
+      pc.oniceconnectionstatechange = () => {
+        iceState.textContent = pc.iceConnectionState;
+        if (pc.iceConnectionState === 'connected') {
           statusBadge.textContent = 'LIVE';
           statusBadge.className = 'badge connected';
-        } else if (peerConnection.iceConnectionState === 'disconnected') {
+        } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
           statusBadge.textContent = 'Reconnecting';
           statusBadge.className = 'badge connecting';
         }
       };
+
+      peerConnection = pc;
+      return pc;
+    }
+
+    async function startViewerSession(roomId) {
+      if (pollInterval) clearInterval(pollInterval);
+      
+      hasReceivedOffer = false;
+      processedCandidates.clear();
+      lastOfferSdp = null;
+      currentRoomId = roomId;
+
+      statusBadge.textContent = 'Connecting...';
+      statusBadge.className = 'badge connecting';
+
+      createPeerConnection(roomId);
 
       pollInterval = setInterval(() => pollSignals(roomId), 1500);
       pollSignals(roomId);
@@ -148,14 +163,32 @@
         
         if (data.success) {
           lastSignal.textContent = `Checked at ${new Date().toLocaleTimeString()}`;
+          const pc = peerConnection;
+          if (!pc) return;
 
-          // Process SDP Offer
-          if (data.sdp && data.sdp.type === 'offer' && !hasReceivedOffer) {
-            hasReceivedOffer = true;
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            await sendSignal(roomId, 'answer', answer);
+          // Process SDP Offer - handles initial connect AND broadcaster reconnection
+          if (data.sdp && data.sdp.type === 'offer') {
+            const newOfferSdp = data.sdp.sdp;
+            // Check if this is a NEW offer (different from the last one we processed)
+            if (!hasReceivedOffer || (lastOfferSdp && newOfferSdp !== lastOfferSdp)) {
+              if (hasReceivedOffer) {
+                // Broadcaster reconnected! Reset and create fresh connection
+                console.log('New offer detected - broadcaster reconnected, resetting...');
+                statusBadge.textContent = 'Reconnecting';
+                statusBadge.className = 'badge connecting';
+                // Close old connection and create a new one
+                const newPc = createPeerConnection(currentRoomId);
+                hasReceivedOffer = false;
+                processedCandidates.clear();
+              }
+
+              lastOfferSdp = newOfferSdp;
+              hasReceivedOffer = true;
+              await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              await sendSignal(currentRoomId, 'answer', answer);
+            }
           }
 
           // Process ICE Candidates
@@ -164,7 +197,11 @@
                const candStr = JSON.stringify(cand);
                if (!processedCandidates.has(candStr)) {
                  processedCandidates.add(candStr);
-                 await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                 try {
+                   await peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                 } catch (e) {
+                   // Ignore errors for candidates that arrive slightly before connection
+                 }
                }
             }
           }
