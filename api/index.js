@@ -14,3 +14,4 @@ module.exports = async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to load viewer page' });
   }
 };
+// Force redeploy - Wed, Jul 22, 2026  7:01:18 PM
