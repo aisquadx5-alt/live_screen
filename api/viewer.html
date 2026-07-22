@@ -163,7 +163,7 @@
         
         if (data.success) {
           lastSignal.textContent = `Checked at ${new Date().toLocaleTimeString()}`;
-          const pc = peerConnection;
+          let pc = peerConnection;
           if (!pc) return;
 
           // Process SDP Offer - handles initial connect AND broadcaster reconnection
